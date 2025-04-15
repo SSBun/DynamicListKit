@@ -5,44 +5,49 @@
 //  Created by caishilin on 2025/4/5.
 //
 
-
-import UIKit
 import OSLog
+import UIKit
 
 func LOG(_ message: String) {
     let logger = Logger(subsystem: "com.example.infinitylistview", category: "InfinityListView")
     logger.debug("\(message)")
 }
 
-protocol InfinityListItem {
+// MARK: - DynamicListItem
+
+protocol DynamicListItem {
     associatedtype ID: Hashable
     var id: ID { get }
 }
 
-protocol InfinityListViewDataSource: AnyObject {
-    func cellBeforeTheCell(listView: InfinityListView, theCell: any InfinityListItem) -> (any InfinityListItem)?
-    func cellAfterTheCell(listView: InfinityListView, theCell: any InfinityListItem) -> (any InfinityListItem)?
-    
-    func cellContentView(listView: InfinityListView, of theCell: any InfinityListItem) -> UIView
-    
-    func heightForCell(listView: InfinityListView, theCell: any InfinityListItem) -> Double
+// MARK: - DynamicListViewDataSource
+
+protocol DynamicListViewDataSource: AnyObject {
+    func listView(listView: DynamicListView, cellBefore theCell: any DynamicListItem) -> (any DynamicListItem)?
+    func listView(listView: DynamicListView, cellAfter theCell: any DynamicListItem) -> (any DynamicListItem)?
+    func listView(listView: DynamicListView, contentViewOf theCell: any DynamicListItem) -> UIView
+    func listView(listView: DynamicListView, heightOf theCell: any DynamicListItem) -> Double
 }
 
-protocol InfinityListViewDelegate: AnyObject {
-    func cellDidAppear(from listView: InfinityListView, cell: InfinityListView.Cell) -> Void
-    func cellDidDisappear(from listView: InfinityListView, cell: InfinityListView.Cell) -> Void
-    func cellDidRemoved(from listView: InfinityListView, removedCell: InfinityListView.Cell) -> Void
+// MARK: - DynamicListViewDelegate
+
+protocol DynamicListViewDelegate: AnyObject {
+    func cellDidAppear(from listView: DynamicListView, cell: DynamicListView.Cell) -> Void
+    func cellDidDisappear(from listView: DynamicListView, cell: DynamicListView.Cell) -> Void
+    func cellDidRemoved(from listView: DynamicListView, removedCell: DynamicListView.Cell) -> Void
 }
 
-extension InfinityListViewDelegate {
-    func cellDidAppear(from listView: InfinityListView, cell: InfinityListView.Cell) {}
-    func cellDidDisappear(from listView: InfinityListView, cell: InfinityListView.Cell) {}
-    func cellDidRemoved(from listView: InfinityListView, removedCell: InfinityListView.Cell) {}
+extension DynamicListViewDelegate {
+    func cellDidAppear(from listView: DynamicListView, cell: DynamicListView.Cell) {}
+    func cellDidDisappear(from listView: DynamicListView, cell: DynamicListView.Cell) {}
+    func cellDidRemoved(from listView: DynamicListView, removedCell: DynamicListView.Cell) {}
 }
 
-class InfinityListView: UIView {
+// MARK: - DynamicListView
+
+class DynamicListView: UIView {
     struct Cell {
-        let item: any InfinityListItem
+        let item: any DynamicListItem
         let contentView: UIView
         let contentHeight: Double
     }
@@ -56,11 +61,10 @@ class InfinityListView: UIView {
     
     private let scrollView = UIScrollView()
     
-    override var safeAreaInsets: UIEdgeInsets { .zero }
+//    override var safeAreaInsets: UIEdgeInsets { .zero }
     
-    var offset: Double {
+    private var offset: Double {
         set {
-            LOG("set offset: \(newValue)")
             scrollView.setContentOffset(CGPoint(x: 0, y: newValue), animated: false)
         }
         get {
@@ -68,7 +72,7 @@ class InfinityListView: UIView {
         }
     }
     
-    var inset: Double {
+    private var inset: Double {
         set {
             scrollView.contentInset = UIEdgeInsets(top: newValue, left: 0, bottom: 0, right: 0)
         }
@@ -76,7 +80,8 @@ class InfinityListView: UIView {
             scrollView.contentInset.top
         }
     }
-    var contentHeight: Double {
+
+    private var contentHeight: Double {
         set {
             scrollView.contentSize = CGSize(width: UIScreen.main.bounds.width, height: newValue)
         }
@@ -85,22 +90,30 @@ class InfinityListView: UIView {
         }
     }
     
-    private var visiableRange: (top: Double, bottom: Double) {
+    private var visibleRange: (top: Double, bottom: Double) {
         (offset, offset + bounds.height)
     }
     
-    private var renderedCells: [Cell] = []
+    /// Cells that have been rendered in the list view.
+    ///
+    /// - Note: You should refresh the list to reload the rendered cells.
+    public private(set) var renderedCells: [Cell] = []
     
-    private var buffer: Double =  100
+    /// A set to track previously visible cells using theirs hash values.
+    private var previouslyVisibleCells: Set<Int> = []
     
-    weak var dataSource: InfinityListViewDataSource?
-    weak var delegate: InfinityListViewDelegate?
+    /// Cells closing the visible area in the range will be preloaded.
+    var preloadRange: Double = 100
+    
+    weak var dataSource: DynamicListViewDataSource?
+    weak var delegate: DynamicListViewDelegate?
     
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupUI()
     }
     
+    @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
@@ -117,18 +130,23 @@ class InfinityListView: UIView {
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor)
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
-    
-    func fetchVisibleCells() -> [Cell] {
-        let visibleRect = CGRect(x: 0, y: visiableRange.top, width: bounds.width, height: bounds.height)
+}
+
+extension DynamicListView {
+    /// The visible cells in the list view.
+    public func queryVisibleCells() -> [Cell] {
+        let visibleRect = CGRect(x: 0, y: visibleRange.top, width: bounds.width, height: bounds.height)
         return renderedCells.filter { config in
             visibleRect.intersects(config.contentView.frame)
         }
     }
     
-    func scroll(to targetItem: any InfinityListItem, position: Position = .middle) {
+    /// Scrolls to the target cell at the specified position in the list view.
+    /// - Warning: Not finding the target item will refresh the whole list view.
+    func scroll(to targetItem: any DynamicListItem, position: Position = .middle, animated: Bool = true) {
         var targetRect: CGRect?
         
         defer {
@@ -136,13 +154,13 @@ class InfinityListView: UIView {
                 LOG("targetRect: \(targetRect)")
                 switch position {
                 case .top:
-                    scrollView.setContentOffset(CGPoint(x: 0, y: targetRect.minY), animated: true)
+                    scrollView.setContentOffset(CGPoint(x: 0, y: targetRect.minY), animated: animated)
                 case .bottom:
-                    scrollView.setContentOffset(CGPoint(x: 0, y: targetRect.maxY - bounds.height), animated: true)
+                    scrollView.setContentOffset(CGPoint(x: 0, y: targetRect.maxY - bounds.height), animated: animated)
                 case .middle:
-                    scrollView.setContentOffset(CGPoint(x: 0, y: targetRect.midY - bounds.height / 2), animated: true)
-                case .offset(let extraOffset):
-                    scrollView.setContentOffset(CGPoint(x: 0, y: targetRect.minY + extraOffset), animated: true)
+                    scrollView.setContentOffset(CGPoint(x: 0, y: targetRect.midY - bounds.height / 2), animated: animated)
+                case let .offset(extraOffset):
+                    scrollView.setContentOffset(CGPoint(x: 0, y: targetRect.minY + extraOffset), animated: animated)
                 }
             }
         }
@@ -164,9 +182,9 @@ class InfinityListView: UIView {
         var bottomOffset = bottomCell.contentView.frame.maxY
         var bottomSearchItem = bottomCell.item
         
-        while(true) {
+        while true {
             if !topSearchEnd {
-                if let topItem = dataSource?.cellBeforeTheCell(listView: self, theCell: topSearchItem) {
+                if let topItem = dataSource?.listView(listView: self, cellBefore: topSearchItem) {
                     let topCellHeight = fetchCellContentHeight(of: topItem)
                     topOffset -= topCellHeight
                     if topItem.id.hashValue == targetItem.id.hashValue {
@@ -188,7 +206,7 @@ class InfinityListView: UIView {
             }
             
             if !bottomSearchEnd {
-                if let bottomItem = dataSource?.cellAfterTheCell(listView: self, theCell: bottomSearchItem) {
+                if let bottomItem = dataSource?.listView(listView: self, cellAfter: bottomSearchItem) {
                     let bottomCellHeight = fetchCellContentHeight(of: bottomItem)
                     if bottomItem.id.hashValue == targetItem.id.hashValue {
                         topSearchEnd = true
@@ -209,13 +227,17 @@ class InfinityListView: UIView {
                 }
             }
             
-            if bottomSearchEnd && topSearchEnd {
+            if bottomSearchEnd, topSearchEnd {
                 break
             }
         }
     }
     
-    func refreshData(with newItem: any InfinityListItem, replacedItem: any InfinityListItem) {
+    /// Dynamically refresh the list view without interrupting the scrolling animation.
+    /// - Parameters:
+    ///   - newItem: The first cell you want to render.
+    ///   - replacedItem: A rendered cell will be replaced by the first cell. If the `replacedItem` isn't visible, the whole list will refresh with the `newItem`.
+    func refreshData(with newItem: any DynamicListItem, replacedItem: any DynamicListItem) {
         if let replacedCell = renderedCells.first(where: { $0.item.id.hashValue == replacedItem.id.hashValue }) {
             refreshData(with: newItem, position: .offset(replacedCell.contentView.frame.minY - offset))
             return
@@ -223,8 +245,13 @@ class InfinityListView: UIView {
         refreshData(with: newItem, position: .top)
     }
     
+    /// Recreates all rendered cells.
+    /// - Parameters:
+    ///   - beginCell: The first cell you want to render.
+    ///   - position: The position of the first cell.
+    ///   - interruptAnimation: Defaults of `false`; `true` will interrupt the scrolling animation.
     func refreshData(
-        with beginCell: any InfinityListItem,
+        with beginCell: any DynamicListItem,
         position: Position = .middle,
         interruptAnimation: Bool = false
     ) {
@@ -232,13 +259,13 @@ class InfinityListView: UIView {
             offset = self.offset
         }
         
-        renderedCells.forEach { $0.contentView.removeFromSuperview()}
+        renderedCells.forEach { $0.contentView.removeFromSuperview() }
         renderedCells.removeAll()
         
         let beginCell = Cell(
             item: beginCell,
             contentView: fetchCellContentView(of: beginCell),
-            contentHeight: dataSource?.heightForCell(listView: self, theCell: beginCell) ?? 0
+            contentHeight: dataSource?.listView(listView: self, heightOf: beginCell) ?? 0
         )
         
         renderedCells.append(beginCell)
@@ -251,53 +278,51 @@ class InfinityListView: UIView {
             positionFrame = CGRect(x: 0, y: offset + self.bounds.height - beginCell.contentHeight, width: self.bounds.width, height: beginCell.contentHeight)
         case .middle:
             positionFrame = CGRect(x: 0, y: offset + (self.bounds.height - beginCell.contentHeight) / 2, width: self.bounds.width, height: beginCell.contentHeight)
-        case .offset(let extraOffset):
+        case let .offset(extraOffset):
             positionFrame = CGRect(x: 0, y: offset + extraOffset, width: self.bounds.width, height: beginCell.contentHeight)
         }
         cellContentView.frame = positionFrame
         scrollView.addSubview(cellContentView)
         renderContentIfNeeded()
     }
-    
 }
 
-extension InfinityListView: UIScrollViewDelegate {
+// MARK: - UIScrollViewDelegate
+
+extension DynamicListView: UIScrollViewDelegate {
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-//        LOG("scrollView offset: \(scrollView.contentOffset.y)")
-//        LOG("scrollView content size: \(scrollView.contentSize.height)")
-//        LOG("scrollView inset: \(scrollView.contentInset.top)")
         renderContentIfNeeded()
     }
 }
 
-extension InfinityListView {
-    func fetchCellContentHeight(of cellItem: any InfinityListItem) -> Double {
+extension DynamicListView {
+    private func fetchCellContentHeight(of cellItem: any DynamicListItem) -> Double {
         if let cell = renderedCells.first(where: { $0.item.id.hashValue == cellItem.id.hashValue }) {
             return cell.contentHeight
         } else {
-            return dataSource?.heightForCell(listView: self, theCell: cellItem) ?? 40
+            return dataSource?.listView(listView: self, heightOf: cellItem) ?? 40
         }
     }
     
-    func fetchCellContentView(of cellItem: any InfinityListItem) -> UIView {
+    private func fetchCellContentView(of cellItem: any DynamicListItem) -> UIView {
         if let cell = renderedCells.first(where: { $0.item.id.hashValue == cellItem.id.hashValue }) {
             return cell.contentView
         } else {
-            let contentView = dataSource?.cellContentView(listView: self, of: cellItem)
+            let contentView = dataSource?.listView(listView: self, contentViewOf: cellItem)
             return contentView ?? UIView()
         }
     }
     
-    func makeCell(from cellItem: any InfinityListItem) -> Cell {
-        let contentView = dataSource?.cellContentView(listView: self, of: cellItem)
-        let contentHeight = dataSource?.heightForCell(listView: self, theCell: cellItem) ?? 0
+    private func makeCell(from cellItem: any DynamicListItem) -> Cell {
+        let contentView = dataSource?.listView(listView: self, contentViewOf: cellItem)
+        let contentHeight = dataSource?.listView(listView: self, heightOf: cellItem) ?? 0
         return Cell(item: cellItem, contentView: contentView ?? UIView(), contentHeight: contentHeight)
     }
     
     private func renderContentIfNeeded() {
         while true {
-            if let topCell = renderedCells.first, topCell.contentView.frame.minY + buffer > offset {
-                if let nextCellItem = dataSource?.cellBeforeTheCell(listView: self, theCell: topCell.item) {
+            if let topCell = renderedCells.first, topCell.contentView.frame.minY + preloadRange > offset {
+                if let nextCellItem = dataSource?.listView(listView: self, cellBefore: topCell.item) {
                     let nextCell = makeCell(from: nextCellItem)
                     renderedCells.insert(nextCell, at: 0)
                     let cellContentView = nextCell.contentView
@@ -312,7 +337,6 @@ extension InfinityListView {
                         inset = -cellContentView.frame.minY
                     }
                 } else {
-//                    LOG("no more top cell")
                     inset = -topCell.contentView.frame.minY
                     break
                 }
@@ -321,8 +345,8 @@ extension InfinityListView {
             }
         }
         while true {
-            if let bottomCell = renderedCells.last, bottomCell.contentView.frame.maxY - buffer < offset + bounds.height {
-                if let nextCellItem = dataSource?.cellAfterTheCell(listView: self, theCell: bottomCell.item) {
+            if let bottomCell = renderedCells.last, bottomCell.contentView.frame.maxY - preloadRange < offset + bounds.height {
+                if let nextCellItem = dataSource?.listView(listView: self, cellAfter: bottomCell.item) {
                     let nextCell = makeCell(from: nextCellItem)
                     renderedCells.append(nextCell)
                     let cellContentView = nextCell.contentView
@@ -337,7 +361,6 @@ extension InfinityListView {
                         contentHeight = cellContentView.frame.maxY
                     }
                 } else {
-//                    LOG("no more bottom cell")
                     contentHeight = bottomCell.contentView.frame.maxY
                     break
                 }
@@ -346,18 +369,38 @@ extension InfinityListView {
             }
         }
         
-        // remove disappearedCells
+        // Remove disappeared cells
         var removedCells: [Cell] = []
         renderedCells.removeAll { cellConfig in
-            let needRemove = cellConfig.contentView.frame.maxY < visiableRange.top - buffer || cellConfig.contentView.frame.minY > visiableRange.bottom + buffer
+            let needRemove = cellConfig.contentView.frame.maxY < visibleRange.top - preloadRange || cellConfig.contentView.frame.minY > visibleRange.bottom + preloadRange
             if needRemove {
                 cellConfig.contentView.removeFromSuperview()
                 removedCells.append(cellConfig)
             }
             return needRemove
         }
-        removedCells.forEach {
-            delegate?.cellDidRemoved(from: self, removedCell: $0)
+        for item in removedCells {
+            delegate?.cellDidRemoved(from: self, removedCell: item)
         }
+        
+        // Detect and notify about appeared and disappeared cells
+        let currentVisibleCells = queryVisibleCells()
+        let currentVisibleCellIds = Set(currentVisibleCells.map { $0.item.id.hashValue })
+        
+        // Find cells that just appeared (in current but not in previous)
+        let newlyAppearedCells = currentVisibleCells.filter { !previouslyVisibleCells.contains($0.item.id.hashValue) }
+        for cell in newlyAppearedCells {
+            delegate?.cellDidAppear(from: self, cell: cell)
+        }
+        
+        // Find cells that just disappeared (in previous but not in current)
+        let newlyDisappearedCellIds = previouslyVisibleCells.subtracting(currentVisibleCellIds)
+        let newlyDisappearedCells = renderedCells.filter { newlyDisappearedCellIds.contains($0.item.id.hashValue) }
+        for cell in newlyDisappearedCells {
+            delegate?.cellDidDisappear(from: self, cell: cell)
+        }
+        
+        // Update the previously visible cells set
+        previouslyVisibleCells = currentVisibleCellIds
     }
 }

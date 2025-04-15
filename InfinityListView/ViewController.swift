@@ -7,7 +7,7 @@
 
 import UIKit
 
-class TestCell: InfinityListItem {
+class TestCell: DynamicListItem {
     let contentView: UIView
     let contentHeight: Double = 100
     let id: Int
@@ -31,20 +31,21 @@ class TestCell: InfinityListItem {
     }
     
     deinit {
-        LOG("deinit cell: \(id)")
+//        LOG("deinit cell: \(id)")
     }
     
 }
 
 class ViewController: UIViewController {
     
-    let listView = InfinityListView()
+    let listView = DynamicListView()
 
     override func viewDidLoad() {
         super.viewDidLoad()
         
         listView.frame = view.bounds
         listView.dataSource = self
+        listView.delegate = self
         view.addSubview(listView)
         
         listView.refreshData(with: TestCell(15), position: .top)
@@ -72,8 +73,8 @@ class ViewController: UIViewController {
     }
 }
 
-extension ViewController: InfinityListViewDataSource {
-    func cellBeforeTheCell(listView: InfinityListView, theCell: any InfinityListItem) -> (any InfinityListItem)? {
+extension ViewController: DynamicListViewDataSource {
+    func listView(listView: DynamicListView, cellBefore theCell: any DynamicListItem) -> (any DynamicListItem)? {
         guard let theCell = theCell as? TestCell else {
             return nil
         }
@@ -85,7 +86,7 @@ extension ViewController: InfinityListViewDataSource {
         }
     }
     
-    func cellAfterTheCell(listView: InfinityListView, theCell: any InfinityListItem) -> (any InfinityListItem)? {
+    func listView(listView: DynamicListView, cellAfter theCell: any DynamicListItem) -> (any DynamicListItem)? {
         guard let theCell = theCell as? TestCell else {
             return nil
         }
@@ -97,17 +98,27 @@ extension ViewController: InfinityListViewDataSource {
         }
     }
     
-    func cellContentView(listView: InfinityListView, of theCell: any InfinityListItem) -> UIView {
+    func listView(listView: DynamicListView, contentViewOf theCell: any DynamicListItem) -> UIView {
         guard let theCell = theCell as? TestCell else {
             return UIView()
         }
         return theCell.contentView
     }
     
-    func heightForCell(listView: InfinityListView, theCell: any InfinityListItem) -> Double {
+    func listView(listView: DynamicListView, heightOf theCell: any DynamicListItem) -> Double {
         guard let theCell = theCell as? TestCell else {
             return 0
         }
-        return theCell.contentHeight
+        return [100, 150, 200].randomElement() ?? 40
+    }
+}
+
+extension ViewController: DynamicListViewDelegate {
+    func cellDidAppear(from listView: DynamicListView, cell: DynamicListView.Cell) {
+        LOG("cell \(cell.item.id) did appear")
+    }
+    
+    func cellDidDisappear(from listView: DynamicListView, cell: DynamicListView.Cell) {
+        LOG("cell \(cell.item.id) did disappear")
     }
 }
