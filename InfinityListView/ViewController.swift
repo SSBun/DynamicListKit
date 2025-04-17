@@ -7,38 +7,76 @@
 
 import UIKit
 
-class TestCell: DynamicListItem {
-    let contentView: UIView
+// MARK: - TestItem
+
+struct TestItem: DynamicIdentifiable {
     let contentHeight: Double = 100
+    var identifier: String { "\(id)" }
     let id: Int
     
-    init(_ index: Int) {
-        self.id = index
-        let label = UILabel()
-        label.textColor = .black
-        label.textAlignment = .center
-        label.backgroundColor = .gray
-        label.font = .systemFont(ofSize: 30, weight: .bold)
-        label.text = "\(index)"
-        contentView = label
-        do {
-            // renadom background color
-            let red = CGFloat.random(in: 0...1)
-            let green = CGFloat.random(in: 0...1)
-            let blue = CGFloat.random(in: 0...1)
-            label.backgroundColor = UIColor(red: red, green: green, blue: blue, alpha: 1)
+    init(_ id: Int) {
+        self.id = id
+    }
+}
+
+// MARK: - TestCell
+
+class TestCell: UILabel {
+    override class var reusableIdentifier: String? { "TestCell" }
+    
+    var index: String = "" {
+        didSet {
+            text = index
         }
     }
     
-    deinit {
-//        LOG("deinit cell: \(id)")
+    init() {
+        super.init(frame: .zero)
+        self.textColor = .black
+        self.textAlignment = .center
+        self.backgroundColor = .gray
+        self.font = .systemFont(ofSize: 30, weight: .bold)
+        
+        // random background color
+        let red = CGFloat.random(in: 0 ... 1)
+        let green = CGFloat.random(in: 0 ... 1)
+        let blue = CGFloat.random(in: 0 ... 1)
+        self.backgroundColor = UIColor(red: red, green: green, blue: blue, alpha: 1)
     }
     
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    deinit {
+        LOG("test cell deinit")
+    }
+}
+
+// MARK: - UIView + DynamicListReusableView
+
+extension UIView: DynamicListReusable {
+    public class var reusableIdentifier: Identifier? {
+        "UIView"
+    }
+}
+
+// MARK: - ViewController
+
+// extension TestCell: DynamicListReusableView {
+//    
+// }
+
+extension Int: DynamicIdentifiable {
+    public var identifier: String {
+        "\(self)"
+    }
 }
 
 class ViewController: UIViewController {
-    
     let listView = DynamicListView()
+    
+    let linkedMap: DynamicLinkedMap = .init((0...30).map(TestItem.init))
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -48,7 +86,9 @@ class ViewController: UIViewController {
         listView.delegate = self
         view.addSubview(listView)
         
-        listView.refreshData(with: TestCell(15), position: .top)
+        listView.registerReusableView(TestCell.self, builder: TestCell.init)
+        
+        listView.refreshData(with: TestItem(15), position: .top)
         
 //        do {
 //            let testView = TestTableView()
@@ -67,58 +107,44 @@ class ViewController: UIViewController {
     }
 
     @objc private func scrollTo15() {
-        let cell = TestCell(15)
-//        listView.scroll(to: cell, position: .bottom)
-        listView.refreshData(with: cell, replacedItem: cell)
+        let cell = TestItem(15)
+        listView.scroll(to: cell, position: .bottom)
+//        listView.refreshData(with: cell, replacedItem: cell)
     }
 }
+
+// MARK: - DynamicListViewDataSource
 
 extension ViewController: DynamicListViewDataSource {
-    func listView(listView: DynamicListView, cellBefore theCell: any DynamicListItem) -> (any DynamicListItem)? {
-        guard let theCell = theCell as? TestCell else {
-            return nil
-        }
-        let newIndex = theCell.id - 1
-        if newIndex >= 0 {
-            return TestCell(newIndex)
-        } else {
-            return nil
-        }
+    func listView(_ listView: DynamicListView, cellBefore theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)? {
+        linkedMap.previousItem(for: theCell.identifier)
     }
     
-    func listView(listView: DynamicListView, cellAfter theCell: any DynamicListItem) -> (any DynamicListItem)? {
-        guard let theCell = theCell as? TestCell else {
-            return nil
-        }
-        let newIndex = theCell.id + 1
-        if newIndex < 30 {
-            return TestCell(newIndex)
-        } else {
-            return nil
-        }
+    func listView(_ listView: DynamicListView, cellAfter theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)? {
+        linkedMap.nextItem(for: theCell.identifier)
     }
     
-    func listView(listView: DynamicListView, contentViewOf theCell: any DynamicListItem) -> UIView {
-        guard let theCell = theCell as? TestCell else {
+    func listView(_ listView: DynamicListView, contentViewOf theCell: any DynamicIdentifiable) -> DynamicListReusableView {
+        guard let testCell = listView.dequeueReusableView(TestCell.self) else {
             return UIView()
         }
-        return theCell.contentView
+        testCell.index = theCell.identifier
+        return testCell
     }
     
-    func listView(listView: DynamicListView, heightOf theCell: any DynamicListItem) -> Double {
-        guard let theCell = theCell as? TestCell else {
-            return 0
-        }
-        return [100, 150, 200].randomElement() ?? 40
+    func listView(_ listView: DynamicListView, heightOf theCell: any DynamicIdentifiable) -> Double {
+        return 100
     }
 }
 
+// MARK: - DynamicListViewDelegate
+
 extension ViewController: DynamicListViewDelegate {
-    func cellDidAppear(from listView: DynamicListView, cell: DynamicListView.Cell) {
-        LOG("cell \(cell.item.id) did appear")
+    func listView(_ listView: DynamicListView, cellDidAppear appearedCell: DynamicListView.Cell) {
+//        LOG("cell \(appearedCell.item.identifier) did appear")
     }
     
-    func cellDidDisappear(from listView: DynamicListView, cell: DynamicListView.Cell) {
-        LOG("cell \(cell.item.id) did disappear")
+    func listView(_ listView: DynamicListView, cellDidDisappear disappearedCell: DynamicListView.Cell) {
+//        LOG("cell \(disappearedCell.item.identifier) did disappear")
     }
 }
