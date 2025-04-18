@@ -9,11 +9,13 @@ import OSLog
 import UIKit
 
 func LOG(_ message: String) {
+#if DEUBG
     let logger = Logger(subsystem: "com.example.infinitylistview", category: "InfinityListView")
     logger.debug("\(message)")
+#endif
 }
 
-// MARK: - DynamicListReusableView
+// MARK: - DynamicListReusable
 
 @objc
 public protocol DynamicListReusable {
@@ -21,29 +23,22 @@ public protocol DynamicListReusable {
     static var reusableIdentifier: Identifier? { get }
 }
 
-public typealias DynamicListReusableView = UIView & DynamicListReusable
+public typealias DynamicListReusableView = DynamicListReusable & UIView
 
 // MARK: - DynamicListViewDataSource
 
 protocol DynamicListViewDataSource: AnyObject {
-    func listView(_ listView: DynamicListView, cellBefore theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)?
-    func listView(_ listView: DynamicListView, cellAfter theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)?
-    func listView(_ listView: DynamicListView, contentViewOf theCell: any DynamicIdentifiable) -> DynamicListReusableView
-    func listView(_ listView: DynamicListView, heightOf theCell: any DynamicIdentifiable) -> Double
+    func listView(_ listView: DynamicListView, itemBefore theItem: any DynamicIdentifiable) -> (any DynamicIdentifiable)?
+    func listView(_ listView: DynamicListView, itemAfter theItem: any DynamicIdentifiable) -> (any DynamicIdentifiable)?
+    func listView(_ listView: DynamicListView, contentViewOf theItem: any DynamicIdentifiable) -> DynamicListReusableView
+    func listView(_ listView: DynamicListView, heightOf theItem: any DynamicIdentifiable) -> Double
 }
 
 // MARK: - DynamicListViewDelegate
 
 protocol DynamicListViewDelegate: AnyObject {
-    func listView(_ listView: DynamicListView, cellDidAppear appearedCell: DynamicListView.Cell) -> Void
-    func listView(_ listView: DynamicListView, cellDidDisappear disappearedCell: DynamicListView.Cell) -> Void
-    func listView(_ listView: DynamicListView, cellDidRemoved removedCell: DynamicListView.Cell) -> Void
-}
-
-extension DynamicListViewDelegate {
-    func listView(_ listView: DynamicListView, cellDidAppear appearedCell: DynamicListView.Cell) {}
-    func listView(_ listView: DynamicListView, cellDidDisappear disappearedCell: DynamicListView.Cell) {}
-    func listView(_ listView: DynamicListView, cellDidRemoved removedCell: DynamicListView.Cell) {}
+    func listView(_ listView: DynamicListView, itemWillAppear appearedCell: DynamicListView.Cell) -> Void
+    func listView(_ listView: DynamicListView, itemWillDisappear disappearedCell: DynamicListView.Cell) -> Void
 }
 
 // MARK: - DynamicListView
@@ -51,24 +46,22 @@ extension DynamicListViewDelegate {
 class DynamicListView: UIView {
     // MARK: - Public Properties
     
-    /// Cells that have been rendered in the list view.
-    ///
-    /// - Note: You should refresh the list to reload the rendered cells.
+    /// The rendered cells in the list view, containing preload cells.
     public private(set) var renderedCells: [Cell] = []
     
-    /// Cells closing the visible area in the range will be preloaded.
+    /// The visible cells in the list view. O(k) average time.
+    public var visibleCells: [Cell] {
+        let visibleRect = CGRect(x: 0, y: visibleRange.top, width: bounds.width, height: bounds.height)
+        return renderedCells.filter { config in
+            visibleRect.intersects(config.contentView.frame)
+        }
+    }
+    
+    /// Cells closing the visible area in the range(top and bottom) will be preloaded.
     public var preloadRange: Double = 100
     
     public weak var dataSource: DynamicListViewDataSource?
     public weak var delegate: DynamicListViewDelegate?
-    public var scrollViewDelegate: UIScrollViewDelegate? {
-        get {
-            scrollDelegateProxy.externalDelegate as? UIScrollViewDelegate
-        }
-        set {
-            scrollDelegateProxy.externalDelegate = newValue
-        }
-    }
     
     // MARK: - Private Properties
 
@@ -100,8 +93,6 @@ class DynamicListView: UIView {
     /// A set to track previously visible cells using theirs hash values.
     private var previouslyVisibleCells: Set<String> = []
     
-    private let scrollDelegateProxy = DelegateForwardingProxy()
-    
     private let cellReusableCenter: CellReusableCenter = .init()
   
     // MARK: Initialization
@@ -118,8 +109,7 @@ class DynamicListView: UIView {
     
     private func setupUI() {
         addSubview(scrollView)
-        scrollDelegateProxy.internalDelegate = self
-        scrollView.delegate = scrollDelegateProxy
+        scrollView.delegate = self
         scrollView.showsVerticalScrollIndicator = false
         
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -137,14 +127,6 @@ class DynamicListView: UIView {
 // MARK: - List Refreshing and Scrolling Operations
 
 extension DynamicListView {
-    /// The visible cells in the list view.
-    public func queryVisibleCells() -> [Cell] {
-        let visibleRect = CGRect(x: 0, y: visibleRange.top, width: bounds.width, height: bounds.height)
-        return renderedCells.filter { config in
-            visibleRect.intersects(config.contentView.frame)
-        }
-    }
-    
     /// Scrolls to the target cell at the specified position in the list view.
     /// - Warning: Not finding the target item will refresh the whole list view.
     public func scroll(
@@ -189,7 +171,7 @@ extension DynamicListView {
         
         while true {
             if !topSearchEnd {
-                if let topItem = dataSource?.listView(self, cellBefore: topSearchItem) {
+                if let topItem = dataSource?.listView(self, itemBefore: topSearchItem) {
                     let topCellHeight = fetchCellContentHeight(of: topItem)
                     topOffset -= topCellHeight
                     if topItem.identifier == targetItem.identifier {
@@ -211,7 +193,7 @@ extension DynamicListView {
             }
             
             if !bottomSearchEnd {
-                if let bottomItem = dataSource?.listView(self, cellAfter: bottomSearchItem) {
+                if let bottomItem = dataSource?.listView(self, itemAfter: bottomSearchItem) {
                     let bottomCellHeight = fetchCellContentHeight(of: bottomItem)
                     if bottomItem.identifier == targetItem.identifier {
                         topSearchEnd = true
@@ -330,14 +312,6 @@ extension DynamicListView {
     }
 }
 
-// MARK: - UIScrollViewDelegate
-
-extension DynamicListView: UIScrollViewDelegate {
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        renderContentIfNeeded()
-    }
-}
-
 // MARK: - Internal Rendering Process
 
 extension DynamicListView {
@@ -367,7 +341,7 @@ extension DynamicListView {
     private func renderContentIfNeeded() {
         while true {
             if let topCell = renderedCells.first, topCell.contentView.frame.minY + preloadRange > offset {
-                if let nextCellItem = dataSource?.listView(self, cellBefore: topCell.item) {
+                if let nextCellItem = dataSource?.listView(self, itemBefore: topCell.item) {
                     let nextCell = makeCell(from: nextCellItem)
                     renderedCells.insert(nextCell, at: 0)
                     let cellContentView = nextCell.contentView
@@ -391,7 +365,7 @@ extension DynamicListView {
         }
         while true {
             if let bottomCell = renderedCells.last, bottomCell.contentView.frame.maxY - preloadRange < offset + bounds.height {
-                if let nextCellItem = dataSource?.listView(self, cellAfter: bottomCell.item) {
+                if let nextCellItem = dataSource?.listView(self, itemAfter: bottomCell.item) {
                     let nextCell = makeCell(from: nextCellItem)
                     renderedCells.append(nextCell)
                     let cellContentView = nextCell.contentView
@@ -426,24 +400,23 @@ extension DynamicListView {
         }
         for item in removedCells {
             cellReusableCenter.enqueue(cell: item.contentView)
-            delegate?.listView(self, cellDidRemoved: item)
         }
         
         // Detect and notify about appeared and disappeared cells
-        let currentVisibleCells = queryVisibleCells()
+        let currentVisibleCells = visibleCells
         let currentVisibleCellIds = Set(currentVisibleCells.map { $0.item.identifier })
         
         // Find cells that just appeared (in current but not in previous)
         let newlyAppearedCells = currentVisibleCells.filter { !previouslyVisibleCells.contains($0.item.identifier) }
         for cell in newlyAppearedCells {
-            delegate?.listView(self, cellDidAppear: cell)
+            delegate?.listView(self, itemWillDisappear: cell)
         }
         
         // Find cells that just disappeared (in previous but not in current)
         let newlyDisappearedCellIds = previouslyVisibleCells.subtracting(currentVisibleCellIds)
         let newlyDisappearedCells = renderedCells.filter { newlyDisappearedCellIds.contains($0.item.identifier) }
         for cell in newlyDisappearedCells {
-            delegate?.listView(self, cellDidDisappear: cell)
+            delegate?.listView(self, itemWillDisappear: cell)
         }
         
         // Update the previously visible cells set
@@ -451,9 +424,13 @@ extension DynamicListView {
     }
 }
 
-// MARK: - DelegateForwardingProxy + UIScrollViewDelegate
+// MARK: - UIScrollViewDelegate
 
-extension DelegateForwardingProxy: UIScrollViewDelegate {}
+extension DynamicListView: UIScrollViewDelegate {
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        renderContentIfNeeded()
+    }
+}
 
 // MARK: - CellReusableCenter
 

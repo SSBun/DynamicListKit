@@ -116,11 +116,11 @@ class ViewController: UIViewController {
 // MARK: - DynamicListViewDataSource
 
 extension ViewController: DynamicListViewDataSource {
-    func listView(_ listView: DynamicListView, cellBefore theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)? {
+    func listView(_ listView: DynamicListView, itemBefore theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)? {
         linkedMap.previousItem(for: theCell.identifier)
     }
     
-    func listView(_ listView: DynamicListView, cellAfter theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)? {
+    func listView(_ listView: DynamicListView, itemAfter theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)? {
         linkedMap.nextItem(for: theCell.identifier)
     }
     
@@ -140,11 +140,11 @@ extension ViewController: DynamicListViewDataSource {
 // MARK: - DynamicListViewDelegate
 
 extension ViewController: DynamicListViewDelegate {
-    func listView(_ listView: DynamicListView, cellDidAppear appearedCell: DynamicListView.Cell) {
+    func listView(_ listView: DynamicListView, itemWillAppear appearedCell: DynamicListView.Cell) {
 //        LOG("cell \(appearedCell.item.identifier) did appear")
     }
     
-    func listView(_ listView: DynamicListView, cellDidDisappear disappearedCell: DynamicListView.Cell) {
+    func listView(_ listView: DynamicListView, itemWillDisappear disappearedCell: DynamicListView.Cell) {
 //        LOG("cell \(disappearedCell.item.identifier) did disappear")
     }
 }
