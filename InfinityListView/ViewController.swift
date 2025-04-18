@@ -83,10 +83,10 @@ class ViewController: UIViewController {
         
         listView.frame = view.bounds
         listView.dataSource = self
-        listView.delegate = self
+//        listView.delegate = self
         view.addSubview(listView)
         
-        listView.registerReusableView(TestCell.self, builder: TestCell.init)
+        listView.registerReusableCell(TestCell.self, builder: TestCell.init)
         
         listView.refreshData(with: TestItem(15), position: .top)
         
@@ -124,27 +124,25 @@ extension ViewController: DynamicListViewDataSource {
         linkedMap.nextItem(for: theCell.identifier)
     }
     
-    func listView(_ listView: DynamicListView, contentViewOf theCell: any DynamicIdentifiable) -> DynamicListReusableView {
-        guard let testCell = listView.dequeueReusableView(TestCell.self) else {
+    func listView(_ listView: DynamicListView, cellFor theCell: any DynamicIdentifiable) -> DynamicListCell {
+        guard let testCell = listView.dequeueReusableCell(TestCell.self) else {
             return UIView()
         }
         testCell.index = theCell.identifier
         return testCell
     }
     
-    func listView(_ listView: DynamicListView, heightOf theCell: any DynamicIdentifiable) -> Double {
+    func listView(_ listView: DynamicListView, heightFor theCell: any DynamicIdentifiable) -> Double {
         return 100
     }
 }
 
 // MARK: - DynamicListViewDelegate
 
-extension ViewController: DynamicListViewDelegate {
-    func listView(_ listView: DynamicListView, itemWillAppear appearedCell: DynamicListView.Cell) {
-//        LOG("cell \(appearedCell.item.identifier) did appear")
-    }
-    
-    func listView(_ listView: DynamicListView, itemWillDisappear disappearedCell: DynamicListView.Cell) {
-//        LOG("cell \(disappearedCell.item.identifier) did disappear")
-    }
-}
+//extension ViewController: DynamicListViewDelegate {
+//    func listView(_ listView: DynamicListView, itemWillAppear appearedItem: any DynamicIdentifiable) {
+//    }
+//    
+//    func listView(_ listView: DynamicListView, itemWillDisappear disappearedItem: any DynamicIdentifiable) {
+//    }
+//}

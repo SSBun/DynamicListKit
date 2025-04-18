@@ -23,26 +23,44 @@ public protocol DynamicListReusable {
     static var reusableIdentifier: Identifier? { get }
 }
 
-public typealias DynamicListReusableView = DynamicListReusable & UIView
+public typealias DynamicListCell = DynamicListReusable & UIView
 
 // MARK: - DynamicListViewDataSource
 
 protocol DynamicListViewDataSource: AnyObject {
     func listView(_ listView: DynamicListView, itemBefore theItem: any DynamicIdentifiable) -> (any DynamicIdentifiable)?
     func listView(_ listView: DynamicListView, itemAfter theItem: any DynamicIdentifiable) -> (any DynamicIdentifiable)?
-    func listView(_ listView: DynamicListView, contentViewOf theItem: any DynamicIdentifiable) -> DynamicListReusableView
-    func listView(_ listView: DynamicListView, heightOf theItem: any DynamicIdentifiable) -> Double
+    func listView(_ listView: DynamicListView, cellFor theItem: any DynamicIdentifiable) -> DynamicListCell
+    func listView(_ listView: DynamicListView, heightFor theItem: any DynamicIdentifiable) -> Double
 }
 
 // MARK: - DynamicListViewDelegate
 
 protocol DynamicListViewDelegate: AnyObject {
-    func listView(_ listView: DynamicListView, itemWillAppear appearedCell: DynamicListView.Cell) -> Void
-    func listView(_ listView: DynamicListView, itemWillDisappear disappearedCell: DynamicListView.Cell) -> Void
+    func listView(_ listView: DynamicListView, cellWillAppear appearedCell: DynamicListView.Cell) -> Void
+    func listView(_ listView: DynamicListView, cellWillDisappear disappearedCell: DynamicListView.Cell) -> Void
+    
+    func listViewDidScroll(_ listView: DynamicListView) -> Void
+    func listViewWillBeginDragging(_ listView: DynamicListView) -> Void
+    func listViewWillEndDragging(_ listView: DynamicListView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) -> Void
+    func listViewDidEndDragging(_ listView: DynamicListView, willDecelerate decelerate: Bool) -> Void
+    func listViewWillBeginDecelerating(_ listView: DynamicListView) -> Void
+    func listViewDidEndDecelerating(_ listView: DynamicListView) -> Void
+    func listViewDidEndScrollingAnimation(_ listView: DynamicListView) -> Void
 }
 
 // MARK: - DynamicListView
 
+/// A highly dynamic list view optimized for efficiently displaying large or infinite datasets with variable heights.
+///
+/// `DynamicListView` renders only cells near the visible area and employs cell reuse (`CellReusableCenter`)
+/// for performance. Its core strength lies in dynamically adding/removing cells during scrolling
+/// (`renderContentIfNeeded`) without needing a full reload. This prevents visual flashes and allows
+/// content updates without interrupting ongoing scroll animations, ensuring a smooth user experience.
+///
+/// Configure using `dataSource` (provides data, cells, heights) and `delegate` (handles scroll/visibility events).
+/// Register cell types via `registerReusableView`. Populate initially using `refreshData`. Ideal for feeds
+/// or continuous lists where seamless loading and updates are crucial.
 class DynamicListView: UIView {
     // MARK: - Public Properties
     
@@ -50,12 +68,7 @@ class DynamicListView: UIView {
     public private(set) var renderedCells: [Cell] = []
     
     /// The visible cells in the list view. O(k) average time.
-    public var visibleCells: [Cell] {
-        let visibleRect = CGRect(x: 0, y: visibleRange.top, width: bounds.width, height: bounds.height)
-        return renderedCells.filter { config in
-            visibleRect.intersects(config.contentView.frame)
-        }
-    }
+    public private(set) var visibleCells: [Cell] = []
     
     /// Cells closing the visible area in the range(top and bottom) will be preloaded.
     public var preloadRange: Double = 100
@@ -226,26 +239,27 @@ extension DynamicListView {
     ///   - replacedItem: A rendered cell will be replaced by the first cell. If the `replacedItem` isn't visible, the whole list will refresh with the `newItem`.
     public func refreshData(
         with newItem: any DynamicIdentifiable,
-        replacedItem: any DynamicIdentifiable
+        replacedItem: any DynamicIdentifiable,
+        interruptScrolling: Bool = false
     ) {
         if let replacedCell = renderedCells.first(where: { $0.item.identifier == replacedItem.identifier }) {
             refreshData(with: newItem, position: .offset(replacedCell.contentView.frame.minY - offset))
             return
         }
-        refreshData(with: newItem, position: .top)
+        refreshData(with: newItem, position: .top, interruptScrolling: interruptScrolling)
     }
     
     /// Recreates all rendered cells.
     /// - Parameters:
     ///   - beginCell: The first cell you want to render.
     ///   - position: The position of the first cell.
-    ///   - interruptAnimation: Defaults of `false`; `true` will interrupt the scrolling animation.
+    ///   - interruptScrolling: Defaults of `false`; `true` will interrupt the scrolling animation.
     public func refreshData(
-        with beginCell: any DynamicIdentifiable,
+        with beginItem: any DynamicIdentifiable,
         position: Position = .middle,
-        interruptAnimation: Bool = false
+        interruptScrolling: Bool = false
     ) {
-        if interruptAnimation {
+        if interruptScrolling {
             offset = self.offset
         }
         
@@ -255,11 +269,7 @@ extension DynamicListView {
         }
         renderedCells.removeAll()
         
-        let beginCell = Cell(
-            item: beginCell,
-            contentView: fetchCellContentView(of: beginCell),
-            contentHeight: dataSource?.listView(self, heightOf: beginCell) ?? 0
-        )
+        let beginCell = makeCell(from: beginItem)
         
         renderedCells.append(beginCell)
         let cellContentView = beginCell.contentView
@@ -283,11 +293,11 @@ extension DynamicListView {
 // MARK: - Cell Reusing Operations
 
 extension DynamicListView {
-    public func registerReusableView<R: DynamicListReusableView>(_ viewType: R.Type, builder: @escaping () -> R) {
-        cellReusableCenter.registerReusableView(viewType, builder: builder)
+    public func registerReusableCell<R: DynamicListCell>(_ viewType: R.Type, builder: @escaping () -> R) {
+        cellReusableCenter.registerReusableCell(viewType, builder: builder)
     }
     
-    public func dequeueReusableView<R: DynamicListReusableView>(_ viewType: R.Type) -> R? {
+    public func dequeueReusableCell<R: DynamicListCell>(_ viewType: R.Type) -> R? {
         guard let identifier = viewType.reusableIdentifier else { return nil }
         return cellReusableCenter.dequeue(cell: identifier) as? R
     }
@@ -299,7 +309,7 @@ extension DynamicListView {
     /// The rendering information of the cell in the list view.
     struct Cell {
         let item: any DynamicIdentifiable
-        let contentView: any DynamicListReusableView
+        let contentView: any DynamicListCell
         let contentHeight: Double
     }
     
@@ -315,11 +325,18 @@ extension DynamicListView {
 // MARK: - Internal Rendering Process
 
 extension DynamicListView {
+    private func queryVisibleCells() -> [Cell] {
+        let visibleRect = CGRect(x: 0, y: visibleRange.top, width: bounds.width, height: bounds.height)
+        return renderedCells.filter { config in
+            visibleRect.intersects(config.contentView.frame)
+        }
+    }
+    
     private func fetchCellContentHeight(of cellItem: any DynamicIdentifiable) -> Double {
         if let cell = renderedCells.first(where: { $0.item.identifier == cellItem.identifier }) {
             return cell.contentHeight
         } else {
-            return dataSource?.listView(self, heightOf: cellItem) ?? 40
+            return dataSource?.listView(self, heightFor: cellItem) ?? 40
         }
     }
     
@@ -327,14 +344,14 @@ extension DynamicListView {
         if let cell = renderedCells.first(where: { $0.item.identifier == cellItem.identifier }) {
             return cell.contentView
         } else {
-            let contentView = dataSource?.listView(self, contentViewOf: cellItem)
+            let contentView = dataSource?.listView(self, cellFor: cellItem)
             return contentView ?? UIView()
         }
     }
     
     private func makeCell(from cellItem: any DynamicIdentifiable) -> Cell {
-        let contentView = dataSource?.listView(self, contentViewOf: cellItem)
-        let contentHeight = dataSource?.listView(self, heightOf: cellItem) ?? 0
+        let contentView = dataSource?.listView(self, cellFor: cellItem)
+        let contentHeight = dataSource?.listView(self, heightFor: cellItem) ?? 0
         return Cell(item: cellItem, contentView: contentView ?? UIView(), contentHeight: contentHeight)
     }
     
@@ -403,20 +420,20 @@ extension DynamicListView {
         }
         
         // Detect and notify about appeared and disappeared cells
-        let currentVisibleCells = visibleCells
-        let currentVisibleCellIds = Set(currentVisibleCells.map { $0.item.identifier })
+        visibleCells = queryVisibleCells()
+        let currentVisibleCellIds = Set(visibleCells.map { $0.item.identifier })
         
         // Find cells that just appeared (in current but not in previous)
-        let newlyAppearedCells = currentVisibleCells.filter { !previouslyVisibleCells.contains($0.item.identifier) }
+        let newlyAppearedCells = visibleCells.filter { !previouslyVisibleCells.contains($0.item.identifier) }
         for cell in newlyAppearedCells {
-            delegate?.listView(self, itemWillDisappear: cell)
+            delegate?.listView(self, cellWillAppear: cell)
         }
         
         // Find cells that just disappeared (in previous but not in current)
         let newlyDisappearedCellIds = previouslyVisibleCells.subtracting(currentVisibleCellIds)
         let newlyDisappearedCells = renderedCells.filter { newlyDisappearedCellIds.contains($0.item.identifier) }
         for cell in newlyDisappearedCells {
-            delegate?.listView(self, itemWillDisappear: cell)
+            delegate?.listView(self, cellWillDisappear: cell)
         }
         
         // Update the previously visible cells set
@@ -429,19 +446,50 @@ extension DynamicListView {
 extension DynamicListView: UIScrollViewDelegate {
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         renderContentIfNeeded()
+        delegate?.listViewDidScroll(self)
     }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+         delegate?.listViewWillBeginDragging(self)
+     }
+    
+     func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+         delegate?.listViewWillEndDragging(self, withVelocity: velocity, targetContentOffset: targetContentOffset)
+     }
+
+     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+         delegate?.listViewDidEndDragging(self, willDecelerate: decelerate)
+     }
+
+     func scrollViewWillBeginDecelerating(_ scrollView: UIScrollView) {
+         delegate?.listViewWillBeginDecelerating(self)
+     }
+
+     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+         delegate?.listViewDidEndDecelerating(self)
+     }
+    
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+         delegate?.listViewDidEndScrollingAnimation(self)
+    }
+
+    func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        return false
+    }
+
+    func scrollViewDidScrollToTop(_ scrollView: UIScrollView) {}
 }
 
 // MARK: - CellReusableCenter
 
 /// A class that manages the reusable cells in the list view.
 class CellReusableCenter {
-    typealias Identifier = DynamicListReusableView.Identifier
-    private var cacheMap: [Identifier: DynamicListReusableView] = [:]
-    private var reusableCellBuilderMap: [Identifier: () -> DynamicListReusableView] = [:]
+    typealias Identifier = DynamicListCell.Identifier
+    private var cacheMap: [Identifier: DynamicListCell] = [:]
+    private var reusableCellBuilderMap: [Identifier: () -> DynamicListCell] = [:]
     
     @discardableResult
-    func registerReusableView<R: DynamicListReusableView>(_ viewType: R.Type, builder: @escaping () -> R) -> Bool {
+    func registerReusableCell<R: DynamicListCell>(_ viewType: R.Type, builder: @escaping () -> R) -> Bool {
         guard let identifier = viewType.reusableIdentifier else {
             assertionFailure("\(viewType) must have a reusableIdentifier")
             return false
@@ -454,12 +502,12 @@ class CellReusableCenter {
         return true
     }
     
-    func enqueue(cell: DynamicListReusableView) {
+    func enqueue(cell: DynamicListCell) {
         guard let identifier = type(of: cell).reusableIdentifier else { return }
         cacheMap[identifier] = cell
     }
     
-    func dequeue(cell identifier: Identifier) -> DynamicListReusableView? {
+    func dequeue(cell identifier: Identifier) -> DynamicListCell? {
         if let cell = cacheMap.removeValue(forKey: identifier) {
             return cell
         }
