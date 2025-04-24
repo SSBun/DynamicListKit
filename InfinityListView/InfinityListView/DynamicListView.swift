@@ -9,10 +9,10 @@ import OSLog
 import UIKit
 
 func LOG(_ message: String) {
-#if DEUBG
+//#if DEUBG
     let logger = Logger(subsystem: "com.example.infinitylistview", category: "InfinityListView")
     logger.debug("\(message)")
-#endif
+//#endif
 }
 
 // MARK: - DynamicListReusable
@@ -28,25 +28,25 @@ public typealias DynamicListCell = DynamicListReusable & UIView
 // MARK: - DynamicListViewDataSource
 
 protocol DynamicListViewDataSource: AnyObject {
-    func listView(_ listView: DynamicListView, itemBefore theItem: any DynamicIdentifiable) -> (any DynamicIdentifiable)?
-    func listView(_ listView: DynamicListView, itemAfter theItem: any DynamicIdentifiable) -> (any DynamicIdentifiable)?
-    func listView(_ listView: DynamicListView, cellFor theItem: any DynamicIdentifiable) -> DynamicListCell
-    func listView(_ listView: DynamicListView, heightFor theItem: any DynamicIdentifiable) -> Double
+    func dynamicListView(_ listView: DynamicListView, itemBefore theItem: any DynamicIdentifiable) -> (any DynamicIdentifiable)?
+    func dynamicListView(_ listView: DynamicListView, itemAfter theItem: any DynamicIdentifiable) -> (any DynamicIdentifiable)?
+    func dynamicListView(_ listView: DynamicListView, cellFor theItem: any DynamicIdentifiable) -> DynamicListCell
+    func dynamicListView(_ listView: DynamicListView, heightFor theItem: any DynamicIdentifiable) -> Double
 }
 
 // MARK: - DynamicListViewDelegate
 
 protocol DynamicListViewDelegate: AnyObject {
-    func listView(_ listView: DynamicListView, cellWillAppear appearedCell: DynamicListView.Cell) -> Void
-    func listView(_ listView: DynamicListView, cellWillDisappear disappearedCell: DynamicListView.Cell) -> Void
+    func dynamicListView(_ listView: DynamicListView, cellWillAppear appearedCell: DynamicListView.Cell) -> Void
+    func dynamicListView(_ listView: DynamicListView, cellWillDisappear disappearedCell: DynamicListView.Cell) -> Void
     
-    func listViewDidScroll(_ listView: DynamicListView) -> Void
-    func listViewWillBeginDragging(_ listView: DynamicListView) -> Void
-    func listViewWillEndDragging(_ listView: DynamicListView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) -> Void
-    func listViewDidEndDragging(_ listView: DynamicListView, willDecelerate decelerate: Bool) -> Void
-    func listViewWillBeginDecelerating(_ listView: DynamicListView) -> Void
-    func listViewDidEndDecelerating(_ listView: DynamicListView) -> Void
-    func listViewDidEndScrollingAnimation(_ listView: DynamicListView) -> Void
+    func dynamicListViewDidScroll(_ listView: DynamicListView) -> Void
+    func dynamicListViewWillBeginDragging(_ listView: DynamicListView) -> Void
+    func dynamicListViewWillEndDragging(_ listView: DynamicListView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) -> Void
+    func dynamicListViewDidEndDragging(_ listView: DynamicListView, willDecelerate decelerate: Bool) -> Void
+    func dynamicListViewWillBeginDecelerating(_ listView: DynamicListView) -> Void
+    func dynamicListViewDidEndDecelerating(_ listView: DynamicListView) -> Void
+    func dynamicListViewDidEndScrollingAnimation(_ listView: DynamicListView) -> Void
 }
 
 // MARK: - DynamicListView
@@ -77,7 +77,7 @@ class DynamicListView: UIView {
     public weak var delegate: DynamicListViewDelegate?
     
     // MARK: - Private Properties
-
+    
     private let scrollView = UIScrollView()
     
     // The Y offset of the list view.
@@ -91,7 +91,7 @@ class DynamicListView: UIView {
         set { scrollView.contentInset = UIEdgeInsets(top: newValue, left: 0, bottom: 0, right: 0) }
         get { scrollView.contentInset.top }
     }
-
+    
     // The height of the content in the list view.
     private var contentHeight: Double {
         set { scrollView.contentSize = CGSize(width: UIScreen.main.bounds.width, height: newValue) }
@@ -102,12 +102,14 @@ class DynamicListView: UIView {
     private var visibleRange: (top: Double, bottom: Double) {
         (offset, offset + bounds.height)
     }
-
+    
     /// A set to track previously visible cells using theirs hash values.
     private var previouslyVisibleCells: Set<String> = []
     
+    private var temporaryRefreshCellCache: [DynamicListReusable.Identifier: Cell] = [:]
+    
     private let cellReusableCenter: CellReusableCenter = .init()
-  
+    
     // MARK: Initialization
     
     override init(frame: CGRect) {
@@ -137,7 +139,82 @@ class DynamicListView: UIView {
     }
 }
 
-// MARK: - List Refreshing and Scrolling Operations
+// MARK: - List Refreshing Operations
+
+extension DynamicListView {
+    /// Reloads all cells of the list view beginning with the `newItem` at the position of the `replacedItem`.
+    /// - Parameters:
+    ///   - newItem: The first cell you want to render.
+    ///   - replacedItem: A rendered cell will be replaced by the first cell.
+    ///   - interruptScrolling: Defaults of `false`; `true` will interrupt the scrolling animation.
+    ///   - keepOriginalCells: A boolean indicating whether to reuse the rendered cells directly or get new cells by the `dataSource`.
+    /// - Warning: The list view won't refresh if the `replacedItem` can't be found in the `renderedCells`.
+    public func reloadList(
+        with newItem: any DynamicIdentifiable,
+        replacedItem: any DynamicIdentifiable,
+        interruptScrolling: Bool = false,
+        keepOriginalCells: Bool = false
+    ) {
+        guard let replacedCell = renderedCells.first(where: { $0.item.identifier == replacedItem.identifier }) else {
+            return
+        }
+        reloadList(
+            with: newItem,
+            position: .offset(replacedCell.contentView.frame.minY - offset),
+            interruptScrolling: interruptScrolling,
+            keepOriginalCells: keepOriginalCells
+        )
+    }
+    
+    /// Reloads all cells of the list view.
+    /// - Parameters:
+    ///   - beginCell: The first cell you want to render.
+    ///   - position: The position of the first cell.
+    ///   - interruptScrolling: Defaults of `false`; `true` will interrupt the scrolling animation.
+    ///   - keepOriginalCells: A boolean indicating whether to reuse the rendered cells directly or get new cells by the `dataSource`.
+    public func reloadList(
+        with beginItem: any DynamicIdentifiable,
+        position: Position = .middle,
+        interruptScrolling: Bool = false,
+        keepOriginalCells: Bool = false
+    ) {
+        if interruptScrolling {
+            offset = self.offset
+        }
+        
+        for renderedCell in renderedCells {
+            renderedCell.contentView.removeFromSuperview()
+            if keepOriginalCells, renderedCell.item.identifier != beginItem.identifier {
+                temporaryRefreshCellCache[renderedCell.item.identifier] = renderedCell
+            } else {
+                cellReusableCenter.enqueue(cell: renderedCell.contentView)
+            }
+        }
+        renderedCells.removeAll()
+        
+        let beginCell = makeCell(from: beginItem)
+        
+        renderedCells.append(beginCell)
+        let cellContentView = beginCell.contentView
+        let positionFrame: CGRect
+        switch position {
+        case .top:
+            positionFrame = CGRect(x: 0, y: offset, width: self.bounds.width, height: beginCell.contentHeight)
+        case .bottom:
+            positionFrame = CGRect(x: 0, y: offset + self.bounds.height - beginCell.contentHeight, width: self.bounds.width, height: beginCell.contentHeight)
+        case .middle:
+            positionFrame = CGRect(x: 0, y: offset + (self.bounds.height - beginCell.contentHeight) / 2, width: self.bounds.width, height: beginCell.contentHeight)
+        case let .offset(extraOffset):
+            positionFrame = CGRect(x: 0, y: offset + extraOffset, width: self.bounds.width, height: beginCell.contentHeight)
+        }
+        cellContentView.frame = positionFrame
+        scrollView.addSubview(cellContentView)
+        renderContentIfNeeded()
+        temporaryRefreshCellCache.removeAll()
+    }
+}
+
+// MARK: - List Scrolling Operations
 
 extension DynamicListView {
     /// Scrolls to the target cell at the specified position in the list view.
@@ -184,7 +261,7 @@ extension DynamicListView {
         
         while true {
             if !topSearchEnd {
-                if let topItem = dataSource?.listView(self, itemBefore: topSearchItem) {
+                if let topItem = dataSource?.dynamicListView(self, itemBefore: topSearchItem) {
                     let topCellHeight = fetchCellContentHeight(of: topItem)
                     topOffset -= topCellHeight
                     if topItem.identifier == targetItem.identifier {
@@ -206,7 +283,7 @@ extension DynamicListView {
             }
             
             if !bottomSearchEnd {
-                if let bottomItem = dataSource?.listView(self, itemAfter: bottomSearchItem) {
+                if let bottomItem = dataSource?.dynamicListView(self, itemAfter: bottomSearchItem) {
                     let bottomCellHeight = fetchCellContentHeight(of: bottomItem)
                     if bottomItem.identifier == targetItem.identifier {
                         topSearchEnd = true
@@ -231,62 +308,6 @@ extension DynamicListView {
                 break
             }
         }
-    }
-    
-    /// Dynamically refresh the list view without interrupting the scrolling animation.
-    /// - Parameters:
-    ///   - newItem: The first cell you want to render.
-    ///   - replacedItem: A rendered cell will be replaced by the first cell. If the `replacedItem` isn't visible, the whole list will refresh with the `newItem`.
-    public func refreshData(
-        with newItem: any DynamicIdentifiable,
-        replacedItem: any DynamicIdentifiable,
-        interruptScrolling: Bool = false
-    ) {
-        if let replacedCell = renderedCells.first(where: { $0.item.identifier == replacedItem.identifier }) {
-            refreshData(with: newItem, position: .offset(replacedCell.contentView.frame.minY - offset))
-            return
-        }
-        refreshData(with: newItem, position: .top, interruptScrolling: interruptScrolling)
-    }
-    
-    /// Recreates all rendered cells.
-    /// - Parameters:
-    ///   - beginCell: The first cell you want to render.
-    ///   - position: The position of the first cell.
-    ///   - interruptScrolling: Defaults of `false`; `true` will interrupt the scrolling animation.
-    public func refreshData(
-        with beginItem: any DynamicIdentifiable,
-        position: Position = .middle,
-        interruptScrolling: Bool = false
-    ) {
-        if interruptScrolling {
-            offset = self.offset
-        }
-        
-        for renderedCell in renderedCells {
-            renderedCell.contentView.removeFromSuperview()
-            cellReusableCenter.enqueue(cell: renderedCell.contentView)
-        }
-        renderedCells.removeAll()
-        
-        let beginCell = makeCell(from: beginItem)
-        
-        renderedCells.append(beginCell)
-        let cellContentView = beginCell.contentView
-        let positionFrame: CGRect
-        switch position {
-        case .top:
-            positionFrame = CGRect(x: 0, y: offset, width: self.bounds.width, height: beginCell.contentHeight)
-        case .bottom:
-            positionFrame = CGRect(x: 0, y: offset + self.bounds.height - beginCell.contentHeight, width: self.bounds.width, height: beginCell.contentHeight)
-        case .middle:
-            positionFrame = CGRect(x: 0, y: offset + (self.bounds.height - beginCell.contentHeight) / 2, width: self.bounds.width, height: beginCell.contentHeight)
-        case let .offset(extraOffset):
-            positionFrame = CGRect(x: 0, y: offset + extraOffset, width: self.bounds.width, height: beginCell.contentHeight)
-        }
-        cellContentView.frame = positionFrame
-        scrollView.addSubview(cellContentView)
-        renderContentIfNeeded()
     }
 }
 
@@ -336,7 +357,7 @@ extension DynamicListView {
         if let cell = renderedCells.first(where: { $0.item.identifier == cellItem.identifier }) {
             return cell.contentHeight
         } else {
-            return dataSource?.listView(self, heightFor: cellItem) ?? 40
+            return dataSource?.dynamicListView(self, heightFor: cellItem) ?? 40
         }
     }
     
@@ -344,22 +365,22 @@ extension DynamicListView {
         if let cell = renderedCells.first(where: { $0.item.identifier == cellItem.identifier }) {
             return cell.contentView
         } else {
-            let contentView = dataSource?.listView(self, cellFor: cellItem)
+            let contentView = dataSource?.dynamicListView(self, cellFor: cellItem)
             return contentView ?? UIView()
         }
     }
     
     private func makeCell(from cellItem: any DynamicIdentifiable) -> Cell {
-        let contentView = dataSource?.listView(self, cellFor: cellItem)
-        let contentHeight = dataSource?.listView(self, heightFor: cellItem) ?? 0
+        let contentView = dataSource?.dynamicListView(self, cellFor: cellItem)
+        let contentHeight = dataSource?.dynamicListView(self, heightFor: cellItem) ?? 0
         return Cell(item: cellItem, contentView: contentView ?? UIView(), contentHeight: contentHeight)
     }
     
     private func renderContentIfNeeded() {
         while true {
             if let topCell = renderedCells.first, topCell.contentView.frame.minY + preloadRange > offset {
-                if let nextCellItem = dataSource?.listView(self, itemBefore: topCell.item) {
-                    let nextCell = makeCell(from: nextCellItem)
+                if let nextCellItem = dataSource?.dynamicListView(self, itemBefore: topCell.item) {
+                    let nextCell = temporaryRefreshCellCache.removeValue(forKey: nextCellItem.identifier) ?? makeCell(from: nextCellItem)
                     renderedCells.insert(nextCell, at: 0)
                     let cellContentView = nextCell.contentView
                     cellContentView.frame = CGRect(
@@ -382,8 +403,8 @@ extension DynamicListView {
         }
         while true {
             if let bottomCell = renderedCells.last, bottomCell.contentView.frame.maxY - preloadRange < offset + bounds.height {
-                if let nextCellItem = dataSource?.listView(self, itemAfter: bottomCell.item) {
-                    let nextCell = makeCell(from: nextCellItem)
+                if let nextCellItem = dataSource?.dynamicListView(self, itemAfter: bottomCell.item) {
+                    let nextCell = temporaryRefreshCellCache.removeValue(forKey: nextCellItem.identifier) ?? makeCell(from: nextCellItem)
                     renderedCells.append(nextCell)
                     let cellContentView = nextCell.contentView
                     cellContentView.frame = CGRect(
@@ -426,14 +447,14 @@ extension DynamicListView {
         // Find cells that just appeared (in current but not in previous)
         let newlyAppearedCells = visibleCells.filter { !previouslyVisibleCells.contains($0.item.identifier) }
         for cell in newlyAppearedCells {
-            delegate?.listView(self, cellWillAppear: cell)
+            delegate?.dynamicListView(self, cellWillAppear: cell)
         }
         
         // Find cells that just disappeared (in previous but not in current)
         let newlyDisappearedCellIds = previouslyVisibleCells.subtracting(currentVisibleCellIds)
         let newlyDisappearedCells = renderedCells.filter { newlyDisappearedCellIds.contains($0.item.identifier) }
         for cell in newlyDisappearedCells {
-            delegate?.listView(self, cellWillDisappear: cell)
+            delegate?.dynamicListView(self, cellWillDisappear: cell)
         }
         
         // Update the previously visible cells set
@@ -446,37 +467,37 @@ extension DynamicListView {
 extension DynamicListView: UIScrollViewDelegate {
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         renderContentIfNeeded()
-        delegate?.listViewDidScroll(self)
+        delegate?.dynamicListViewDidScroll(self)
     }
-
-    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-         delegate?.listViewWillBeginDragging(self)
-     }
     
-     func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
-         delegate?.listViewWillEndDragging(self, withVelocity: velocity, targetContentOffset: targetContentOffset)
-     }
-
-     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-         delegate?.listViewDidEndDragging(self, willDecelerate: decelerate)
-     }
-
-     func scrollViewWillBeginDecelerating(_ scrollView: UIScrollView) {
-         delegate?.listViewWillBeginDecelerating(self)
-     }
-
-     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-         delegate?.listViewDidEndDecelerating(self)
-     }
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        delegate?.dynamicListViewWillBeginDragging(self)
+    }
+    
+    func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+        delegate?.dynamicListViewWillEndDragging(self, withVelocity: velocity, targetContentOffset: targetContentOffset)
+    }
+    
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        delegate?.dynamicListViewDidEndDragging(self, willDecelerate: decelerate)
+    }
+    
+    func scrollViewWillBeginDecelerating(_ scrollView: UIScrollView) {
+        delegate?.dynamicListViewWillBeginDecelerating(self)
+    }
+    
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        delegate?.dynamicListViewDidEndDecelerating(self)
+    }
     
     func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
-         delegate?.listViewDidEndScrollingAnimation(self)
+        delegate?.dynamicListViewDidEndScrollingAnimation(self)
     }
-
+    
     func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
         return false
     }
-
+    
     func scrollViewDidScrollToTop(_ scrollView: UIScrollView) {}
 }
 

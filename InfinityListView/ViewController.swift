@@ -88,13 +88,7 @@ class ViewController: UIViewController {
         
         listView.registerReusableCell(TestCell.self, builder: TestCell.init)
         
-        listView.refreshData(with: TestItem(15), position: .top)
-        
-//        do {
-//            let testView = TestTableView()
-//            testView.frame = view.bounds
-//            view.addSubview(testView)
-//        }
+        listView.reloadList(with: TestItem(15), position: .top)
         
         // add a test button to scroll the list view to a specific item
         do {
@@ -106,25 +100,34 @@ class ViewController: UIViewController {
         }
     }
 
+    var localId: Int = 31
     @objc private func scrollTo15() {
         let cell = TestItem(15)
-        listView.scroll(to: cell, position: .bottom)
-//        listView.refreshData(with: cell, replacedItem: cell)
+//        listView.scroll(to: cell, position: .bottom, animated: false)
+//        UIView.animate(withDuration: 0.5) {
+//        linkedMap.append(cell)
+//        listView.scroll(to: cell, position: .bottom)
+            self.listView.reloadList(with: cell, replacedItem: cell, keepOriginalCells: true)
+//        }
+//        localId += 1
     }
 }
 
 // MARK: - DynamicListViewDataSource
 
+var cellHeight: Double = 100
+
 extension ViewController: DynamicListViewDataSource {
-    func listView(_ listView: DynamicListView, itemBefore theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)? {
+    func dynamicListView(_ listView: DynamicListView, itemBefore theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)? {
         linkedMap.previousItem(for: theCell.identifier)
     }
     
-    func listView(_ listView: DynamicListView, itemAfter theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)? {
+    func dynamicListView(_ listView: DynamicListView, itemAfter theCell: any DynamicIdentifiable) -> (any DynamicIdentifiable)? {
         linkedMap.nextItem(for: theCell.identifier)
     }
     
-    func listView(_ listView: DynamicListView, cellFor theCell: any DynamicIdentifiable) -> DynamicListCell {
+    func dynamicListView(_ listView: DynamicListView, cellFor theCell: any DynamicIdentifiable) -> DynamicListCell {
+        LOG("fetch cell content: \(theCell.identifier)")
         guard let testCell = listView.dequeueReusableCell(TestCell.self) else {
             return UIView()
         }
@@ -132,17 +135,14 @@ extension ViewController: DynamicListViewDataSource {
         return testCell
     }
     
-    func listView(_ listView: DynamicListView, heightFor theCell: any DynamicIdentifiable) -> Double {
-        return 100
+    func dynamicListView(_ listView: DynamicListView, heightFor theCell: any DynamicIdentifiable) -> Double {
+        if theCell.identifier == "15" {
+            defer {
+                cellHeight += 20
+            }
+            return cellHeight
+        } else {
+            return 100
+        }
     }
 }
-
-// MARK: - DynamicListViewDelegate
-
-//extension ViewController: DynamicListViewDelegate {
-//    func listView(_ listView: DynamicListView, itemWillAppear appearedItem: any DynamicIdentifiable) {
-//    }
-//    
-//    func listView(_ listView: DynamicListView, itemWillDisappear disappearedItem: any DynamicIdentifiable) {
-//    }
-//}
